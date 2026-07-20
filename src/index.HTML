@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>4G/5G基站可视化GIS平台(稳定增强版)</title>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=34cdc8f5f67833b729b04ff67655faff&plugin=AMap.RangingTool,AMap.Geolocation,AMap.MouseTool"></script>
+    <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, #map { width: 100%; height: 100vh; font-family: "Microsoft YaHei", sans-serif; overflow: hidden; }
+        .panel {
+            position: absolute; top: 10px; left: 10px; z-index: 100;
+            background: rgba(255,255,255,0.96); border-radius: 8px;
+            padding: 15px; width: 340px; max-height: 90vh; overflow-y: auto;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+            transition: all 0.3s ease; transform-origin: top left;
+        }
+        .panel.collapsed { max-height: 44px; overflow: hidden; padding-bottom: 0; }
+        .panel.collapsed .panel-body { display: none; }
+        .panel-toggle {
+            position: absolute; top: 12px; right: 12px;
+            width: 24px; height: 24px; border: none; border-radius: 4px;
+            background: #1890ff; color: white; font-size: 14px;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            padding: 0; line-height: 1; z-index: 101;
+        }
+        .panel-toggle:hover { opacity: 0.8; }
+        @media (max-width: 768px) {
+            .panel { width: calc(100% - 20px); max-height: 45vh; bottom: 10px; top: auto; transform-origin: bottom left; }
+            .panel.collapsed { max-height: 44px; }
+        }
+        .panel h3 { font-size: 15px; margin: 12px 0 8px; color: #333; border-bottom: 1px solid #eee; padding-bottom: 5px; padding-right: 30px; }
+        .panel h3:first-of-type { margin-top: 0; }
+        .btn-group { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
+        button { padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; background: #1890ff; color: white; font-size: 12px; transition: all 0.2s; white-space: nowrap; }
+        button:hover { opacity: 0.85; }
+        button.active { background: #096dd9; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
+        button.danger { background: #ff4d4f; }
+        button.success { background: #52c41a; }
+        button.warn { background: #faad14; color: #333; }
+        input[type="text"], input[type="number"] { width: 100%; padding: 7px 8px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 6px; font-size: 13px; }
+        .layer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-bottom: 8px; }
+        .layer-item { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+        .color-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+        .search-result { max-height: 180px; overflow-y: auto; border: 1px solid #eee; border-radius: 4px; margin-top: 5px; display: none; }
+        .search-item { padding: 7px 8px; cursor: pointer; border-bottom: 1px solid #f5f5f5; font-size: 12px; }
+        .search-item:hover { background: #e6f7ff; }
+        .info-content { font-size: 13px; line-height: 1.8; min-width: 220px; }
+        .info-content b { color: #1890ff; }
+        .stats-panel { position: absolute; top: 10px; right: 10px; z-index: 100; background: rgba(0,0,0,0.7); color: white; padding: 10px 14px; border-radius: 8px; font-size: 12px; pointer-events: none; }
+        .loading-mask { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(255,255,255,0.92); z-index: 9999; display: none; align-items: center; justify-content: center; font-size: 18px; color: #333; flex-direction: column; gap: 10px; }
+        .progress-bar { width: 220px; height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #1890ff; width: 0%; transition: width 0.3s; }
+        .coord-toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.8); color: #fff; padding: 10px 20px;
+            border-radius: 20px; font-size: 13px; z-index: 200;
+            opacity: 0; transition: opacity 0.3s; pointer-events: none;
+        }
+        .coord-toast.show { opacity: 1; }
+        .buffer-row { display: flex; gap: 5px; align-items: center; margin-bottom: 8px; }
+        .buffer-row input { margin-bottom: 0; flex: 1; }
+        .buffer-row button { flex-shrink: 0; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="stats-panel" id="statsPanel">加载中...</div>
+    <div class="coord-toast" id="coordToast"></div>
+    <div class="loading-mask" id="loadingMask">
+        <span id="loadingText">⏳ 正在处理数据...</span>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+
+<div class="panel" id="controlPanel">
+    <button class="panel-toggle" id="panelToggleBtn" onclick="togglePanel()" title="收起/展开面板">−</button>
+    <h3>📡 基站GIS可视化工具</h3>
+    <div class="panel-body">
+        <div style="margin-bottom: 12px;">
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">导入4G工参 (.xlsx/.xls)</label>
+            <input type="file" id="file4g" accept=".xlsx,.xls" style="font-size:12px; margin-bottom:8px;">
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">导入5G工参 (.xlsx/.xls)</label>
+            <input type="file" id="file5g" accept=".xlsx,.xls" style="font-size:12px; margin-bottom:8px;">
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">导入铁塔信息 (.xlsx/.xls)</label>
+            <input type="file" id="fileTower" accept=".xlsx,.xls" style="font-size:12px;">
+        </div>
+
+        <div style="margin-bottom: 12px;">
+            <input type="text" id="searchInput" placeholder="输入站名/小区名/ECI/CI...">
+            <div class="btn-group">
+                <button onclick="doSearch()">🔍 搜索定位</button>
+                <button class="success" onclick="locateMe()">📍 我的位置</button>
+            </div>
+            <div class="search-result" id="searchResult"></div>
+        </div>
+
+        <h3>🎯 查询定位</h3>
+        <div class="buffer-row">
+            <input type="number" id="locLng" placeholder="经度" step="0.000001">
+            <input type="number" id="locLat" placeholder="纬度" step="0.000001">
+            <button onclick="locateByCoord()">跳转</button>
+        </div>
+        <div class="btn-group">
+            <button onclick="toggleCoordPick()" id="btnCoordPick">📋 坐标拾取</button>
+        </div>
+
+        <h3>🗺️ 图层控制</h3>
+        <div class="layer-grid">
+            <div class="layer-item"><input type="checkbox" id="layer4g" checked onchange="toggleLayer('4g')"> <span class="color-dot" style="background:blue"></span> 4G基站</div>
+            <div class="layer-item"><input type="checkbox" id="layer5g" checked onchange="toggleLayer('5g')"> <span class="color-dot" style="background:red"></span> 5G基站</div>
+            <div class="layer-item"><input type="checkbox" id="layerTower" checked onchange="toggleLayer('tower')"> <span class="color-dot" style="background:gray"></span> 铁塔站点</div>
+            <div class="layer-item"><input type="checkbox" id="layerDraw" checked onchange="toggleDrawLayer()"> <span class="color-dot" style="background:#722ed1"></span> 标绘图层</div>
+        </div>
+
+        <h3>🛠️ 工具集</h3>
+        <div class="btn-group">
+            <button onclick="startMeasureDist()" id="btnMDist">📏 距离测量</button>
+            <button onclick="startMeasureAngle()" id="btnMAngle">📐 角度测量</button>
+            <button onclick="startDrawRect()" id="btnDRect">▭ 矩形框选</button>
+            <button onclick="startDrawPolySelect()" id="btnDPolySel">⬡ 多边形框选</button>
+            <button onclick="toggleCompass()" id="btnCompass">🧭 罗盘</button>
+        </div>
+        <div class="btn-group">
+            <!-- 【恢复】清除标绘按钮 -->
+            <button class="warn" onclick="clearDrawings()">🧹 清除标绘</button>
+            <button class="warn" onclick="exportSelectionData()" id="btnExportSel" disabled>📤 导出框选数据</button>
+            <button class="danger" onclick="clearAllData()">🗑️ 清空所有数据</button>
+        </div>
+    </div>
+</div>
+
+<footer style="position:absolute;bottom:0;width:100%;background:rgba(255,255,255,0.9);border-top:1px solid #e5e7eb;padding:8px 0;z-index:99;text-align:center;font-size:12px;color:#6b7280;">
+    基站GIS可视化工具 © 2026 盐城联通网络部无线网运营网格&夏小祥创新工作室  | V3.5 稳定版
+</footer>
+
+<script>
+/** ==================== 全局变量 ==================== */
+let map, rangingTool, geolocation, mouseTool;
+let overlayGroup4g, overlayGroup5g, overlayGroupTower, drawOverlayGroup;
+let allStationData = [];
+let db;
+let myLocationMarker = null;
+const BATCH_SIZE = 1000;
+const LOD_ZOOM_THRESHOLD = 12;
+
+let activeTool = null;
+let coordPickMode = false;
+let lastSelectionBounds = null;
+let drawingOverlays = [];
+
+const FREQ_COLORS = {
+    '1650':'rgba(0,100,255,0.5)','1850':'rgba(0,200,100,0.5)','3745':'rgba(255,0,100,0.5)',
+    '100':'rgba(255,165,0,0.5)','300':'rgba(128,0,128,0.5)','1500':'rgba(0,255,255,0.5)',
+    '475':'rgba(255,255,0,0.5)','3766':'rgba(100,100,255,0.5)','1506':'rgba(0,128,128,0.5)',
+    '2452':'rgba(255,100,0,0.5)','101':'rgba(100,255,100,0.5)',
+    'N78':'rgba(255,0,0,0.5)','N1':'rgba(0,0,255,0.5)','tower':'rgba(100,100,100,0.7)'
+};
+
+const FIELD_MAP = {
+    name:['物理站址名','站名','站点名称','SiteName','基站名称','铁塔站址名称','铁塔名称','塔名','TowerName'],
+    cellName:['5G小区名称','CellName','小区名','NR小区名称','小区名称','NR Cell Name'],
+    eci:['ECI','eNodeBID','ENB ID','gNB ID','GNB_ID'],
+    ci:['CI','CellID','Cell ID','本地小区ID','NR Cell ID'],
+    lng:['CellLongitude','经度','Longitude','Lng','lon'],
+    lat:['CellLatitude','纬度','Latitude','Lat'],
+    azimuth:['Azimuth','方位角','Direction','方向角'],
+    freq:['频点号','频带','Band','NR频段','ARFCN','NR ARFCN','频段'],
+    siteType:['站型','小区类型','Site Type','场景类型','覆盖类型'],
+    traffic:['下行中心频率','下行带宽（HZ）','PRB利用率','RRC连接数','业务量'],
+    district:['区县','所属区县','District','区域'],
+    siteCode:['站址编码','站点编码','SiteCode','铁塔编码','编码'],
+    towerHeight:['铁塔高度(米)','塔高(m)','高度','Height','塔体高度','塔高','铁塔高度'],
+    roomType:['机房类型','机房','RoomType','配套机房'],
+    towerKind:['铁塔种类','塔型','铁塔类型','TowerType','结构类型','铁塔种类'],
+    address:['详细地址','地址','Address','站址地址','物理地址']
+};
+
+/** ==================== 初始化 ==================== */
+window.onload = async function() {
+    try {
+        if (typeof AMap === 'undefined') { alert("高德地图API加载失败，请检查网络连接。"); return; }
+        if (typeof XLSX === 'undefined') { console.warn("SheetJS未加载，Excel导入功能将不可用。"); }
+
+        map = new AMap.Map('map', { zoom: 12, viewMode: '2D' });
+        overlayGroup4g = new AMap.OverlayGroup();
+        overlayGroup5g = new AMap.OverlayGroup();
+        overlayGroupTower = new AMap.OverlayGroup();
+        drawOverlayGroup = new AMap.OverlayGroup();
+        map.add([overlayGroup4g, overlayGroup5g, overlayGroupTower, drawOverlayGroup]);
+
+        rangingTool = new AMap.RangingTool(map);
+        geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 10000 });
+        mouseTool = new AMap.MouseTool(map);
+
+        // 距离测量结束自动释放
+        rangingTool.on('end', () => {
+            rangingTool.turnOff();
+            deactivateTool();
+            showCoordToast("📏 距离测量已完成，工具已释放");
+        });
+
+        map.on('click', (e) => {
+            if (!e.target || e.target.CLASS_NAME === 'AMap.Map') collapsePanel();
+            if (coordPickMode && e.lnglat) {
+                const lng = e.lnglat.getLng().toFixed(6);
+                const lat = e.lnglat.getLat().toFixed(6);
+                const text = `${lng}, ${lat}`;
+                navigator.clipboard.writeText(text).then(() => showCoordToast(`✅ 已复制: ${text}`)).catch(() => showCoordToast(`📋 坐标: ${text} (请手动复制)`));
+            }
+        });
+
+        // MouseTool 绘制完成事件
+        mouseTool.on('draw', (e) => {
+            const obj = e.obj;
+            drawingOverlays.push(obj);
+            drawOverlayGroup.addOverlays([obj]);
+
+            if (activeTool === 'rect') {
+                lastSelectionBounds = { type: 'rect', bounds: obj.getBounds() };
+                document.getElementById('btnExportSel').disabled = false;
+                exportSelectionData();
+                deactivateTool();
+                showCoordToast("▭ 矩形框选完成，数据已导出，工具已释放");
+            }
+            else if (activeTool === 'polyselect') {
+                lastSelectionBounds = { type: 'polygon', path: obj.getPath() };
+                document.getElementById('btnExportSel').disabled = false;
+                exportSelectionData();
+                deactivateTool();
+                showCoordToast("⬡ 多边形框选完成，数据已导出，工具已释放");
+            }
+        });
+
+        // 角度测量（3点完成后释放）
+        let anglePoints = [];
+        map.on('click', (e) => {
+            if (activeTool !== 'angle' || !e.lnglat) return;
+            anglePoints.push(e.lnglat);
+            if (anglePoints.length === 3) {
+                const [A, B, C] = anglePoints;
+                const ba = { x: A.lng - B.lng, y: A.lat - B.lat };
+                const bc = { x: C.lng - B.lng, y: C.lat - B.lat };
+                const dot = ba.x * bc.x + ba.y * bc.y;
+                const cross = ba.x * bc.y - ba.y * bc.x;
+                let angle = Math.abs(Math.atan2(cross, dot) * 180 / Math.PI);
+                angle = Math.round(angle * 100) / 100;
+                const poly = new AMap.Polyline({ path: [A, B, C], strokeColor: '#faad14', strokeWeight: 3, strokeOpacity: 0.8 });
+                drawingOverlays.push(poly); drawOverlayGroup.addOverlays([poly]);
+                const label = new AMap.Text({ text: `${angle}°`, position: B, offset: new AMap.Pixel(10, -10), style: { 'background-color': '#faad14', 'border-color': '#faad14', 'color': '#fff', 'font-size': '14px', 'padding': '4px 8px', 'border-radius': '4px' } });
+                drawingOverlays.push(label); drawOverlayGroup.addOverlays([label]);
+                showCoordToast(`📐 夹角: ${angle}°，工具已释放`);
+                anglePoints = []; deactivateTool();
+            }
+        });
+
+        await initDB();
+        await loadFromDB();
+        map.on('moveend', () => renderVisibleStations());
+        map.on('zoomchange', () => renderVisibleStations());
+        updateStats();
+    } catch (e) {
+        console.error("初始化错误:", e);
+        alert("系统初始化失败，请刷新页面重试。");
+    }
+};
+
+/** ==================== 面板控制 ==================== */
+function togglePanel() {
+    const p = document.getElementById('controlPanel'), b = document.getElementById('panelToggleBtn');
+    p.classList.toggle('collapsed'); b.textContent = p.classList.contains('collapsed') ? '+' : '−';
+}
+function collapsePanel() {
+    const p = document.getElementById('controlPanel'), b = document.getElementById('panelToggleBtn');
+    if (!p.classList.contains('collapsed')) { p.classList.add('collapsed'); b.textContent = '+'; }
+}
+function afterPanelTransition(callback) {
+    const panel = document.getElementById('controlPanel');
+    let executed = false;
+    const exec = () => { if (!executed) { executed = true; callback(); } };
+    if (panel.classList.contains('collapsed')) { requestAnimationFrame(exec); return; }
+    const onEnd = (e) => {
+        if (e.propertyName === 'max-height' || e.propertyName === 'all') { panel.removeEventListener('transitionend', onEnd); exec(); }
+    };
+    panel.addEventListener('transitionend', onEnd);
+    setTimeout(exec, 350);
+}
+
+/** ==================== 工具状态管理 ==================== */
+function deactivateTool() {
+    activeTool = null; coordPickMode = false; mouseTool.close(true);
+    document.querySelectorAll('.panel button.active').forEach(b => b.classList.remove('active'));
+    map.setDefaultCursor('default');
+}
+function activateTool(toolId, btnId) {
+    deactivateTool(); activeTool = toolId;
+    if (btnId) document.getElementById(btnId).classList.add('active');
+    collapsePanel();
+}
+function showCoordToast(msg) {
+    const t = document.getElementById('coordToast'); t.textContent = msg; t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+/** ==================== 坐标转换 ==================== */
+function wgs84ToGcj02(lng, lat) {
+    const a = 6378245.0, ee = 0.00669342162296594323;
+    if (lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271) return [lng, lat];
+    let dLat = transformLat(lng - 105.0, lat - 35.0), dLng = transformLng(lng - 105.0, lat - 35.0);
+    const radLat = lat / 180.0 * Math.PI; let magic = Math.sin(radLat); magic = 1 - ee * magic * magic;
+    const sqrtMagic = Math.sqrt(magic);
+    dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
+    dLng = (dLng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * Math.PI);
+    return [lng + dLng, lat + dLat];
+}
+function transformLat(x, y) { let r = -100.0 + 2.0*x + 3.0*y + 0.2*y*y + 0.1*x*y + 0.2*Math.sqrt(Math.abs(x)); r += (20.0*Math.sin(6.0*x*Math.PI) + 20.0*Math.sin(2.0*x*Math.PI)) * 2.0 / 3.0; r += (20.0*Math.sin(y*Math.PI) + 40.0*Math.sin(y / 3.0*Math.PI)) * 2.0 / 3.0; r += (160.0*Math.sin(y / 12.0*Math.PI) + 320*Math.sin(y*Math.PI / 30.0)) * 2.0 / 3.0; return r; }
+function transformLng(x, y) { let r = 300.0 + x + 2.0*y + 0.1*x*x + 0.1*x*y + 0.1*Math.sqrt(Math.abs(x)); r += (20.0*Math.sin(6.0*x*Math.PI) + 20.0*Math.sin(2.0*x*Math.PI)) * 2.0 / 3.0; r += (20.0*Math.sin(x*Math.PI) + 40.0*Math.sin(x / 3.0*Math.PI)) * 2.0 / 3.0; r += (150.0*Math.sin(x / 12.0*Math.PI) + 300.0*Math.sin(x / 30.0*Math.PI)) * 2.0 / 3.0; return r; }
+
+/** ==================== IndexedDB ==================== */
+function initDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open('BaseStationGIS_Pro', 1);
+        req.onupgradeneeded = (e) => { db = e.target.result; if (!db.objectStoreNames.contains('stations')) db.createObjectStore('stations', { keyPath: 'id' }); };
+        req.onsuccess = (e) => { db = e.target.result; resolve(); };
+        req.onerror = (e) => reject(e);
+    });
+}
+async function saveToDBBatch(data, onProgress) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('stations', 'readwrite'); const store = tx.objectStore('stations'); store.clear();
+        let processed = 0; const total = data.length;
+        for (let i = 0; i < total; i += BATCH_SIZE) { const batch = data.slice(i, i + BATCH_SIZE); batch.forEach(item => store.put(item)); processed += batch.length; if (onProgress) onProgress(processed, total); }
+        tx.oncomplete = () => resolve(processed); tx.onerror = (e) => reject(e);
+    });
+}
+async function loadFromDB() {
+    return new Promise((resolve) => {
+        const tx = db.transaction('stations', 'readonly'); const req = tx.objectStore('stations').getAll();
+        req.onsuccess = () => { allStationData = req.result || []; renderVisibleStations(); updateStats(); resolve(); };
+        req.onerror = () => resolve();
+    });
+}
+function getAllFromDB() {
+    return new Promise(resolve => { const tx = db.transaction('stations', 'readonly'); const req = tx.objectStore('stations').getAll(); req.onsuccess = () => resolve(req.result || []); req.onerror = () => resolve([]); });
+}
+function clearAllData() {
+    if (!confirm("确定要清空所有已导入的基站数据吗？此操作不可恢复！")) return;
+    const tx = db.transaction('stations', 'readwrite'); tx.objectStore('stations').clear();
+    tx.oncomplete = () => {
+        overlayGroup4g.clearOverlays(); overlayGroup5g.clearOverlays(); overlayGroupTower.clearOverlays();
+        allStationData = [];
+        if (myLocationMarker) { map.remove(myLocationMarker); myLocationMarker = null; }
+        updateStats(); alert("✅ 数据已清空");
+    };
+}
+
+/** ==================== Excel解析 ==================== */
+document.getElementById('file4g').addEventListener('change', (e) => parseExcel(e, '4g'));
+document.getElementById('file5g').addEventListener('change', (e) => parseExcel(e, '5g'));
+document.getElementById('fileTower').addEventListener('change', (e) => parseExcel(e, 'tower'));
+function getField(row, key) { const candidates = FIELD_MAP[key] || []; for (const k of candidates) { if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') return row[k]; } return ''; }
+async function parseExcel(event, type) {
+    const file = event.target.files[0]; if (!file) return;
+    if (typeof XLSX === 'undefined') { alert("Excel处理库加载失败，请检查网络连接或刷新页面。"); return; }
+    const mask = document.getElementById('loadingMask'), loadingText = document.getElementById('loadingText'), progressFill = document.getElementById('progressFill');
+    const typeLabel = type === 'tower' ? '铁塔信息' : `${type.toUpperCase()}工参`;
+    loadingText.innerText = `⏳ 正在解析${typeLabel}...`; progressFill.style.width = '0%'; mask.style.display = 'flex';
+    setTimeout(async () => {
+        try {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                loadingText.innerText = `⏳ 正在转换${typeLabel}数据...`;
+                const data = new Uint8Array(e.target.result); const wb = XLSX.read(data, { type: 'array' });
+                const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                const normalized = []; let skipped = 0;
+                json.forEach((row, idx) => {
+                    const lng = parseFloat(getField(row, 'lng')), lat = parseFloat(getField(row, 'lat'));
+                    if (isNaN(lng) || isNaN(lat) || lng < 70 || lng > 140 || lat < 0 || lat > 60) { skipped++; return; }
+                    const item = { id: `${type}_${Date.now()}_${idx}`, type, name: String(getField(row, 'name')), lng, lat };
+                    if (type === 'tower') Object.assign(item, { cellName:'',eci:'',ci:'',azimuth:0,freq:'tower',siteType:'铁塔',traffic:0,district:String(getField(row,'district'))||'-',siteCode:String(getField(row,'siteCode'))||'-',towerHeight:String(getField(row,'towerHeight'))||'-',roomType:String(getField(row,'roomType'))||'-',towerKind:String(getField(row,'towerKind'))||'-',address:String(getField(row,'address'))||'-' });
+                    else Object.assign(item, { cellName:String(getField(row,'cellName')),eci:String(getField(row,'eci')),ci:String(getField(row,'ci')),azimuth:parseFloat(getField(row,'azimuth'))||0,freq:String(getField(row,'freq')),siteType:String(getField(row,'siteType'))||'宏站',traffic:parseFloat(getField(row,'traffic'))||Math.random()*100 });
+                    normalized.push(item);
+                });
+                loadingText.innerText = `⏳ 正在保存到本地存储...`;
+                const existing = await getAllFromDB();
+                await saveToDBBatch([...existing, ...normalized], (p, t) => { progressFill.style.width = `${Math.round(p/t*100)}%`; });
+                allStationData = await getAllFromDB(); renderVisibleStations(); updateStats(); mask.style.display = 'none';
+                alert(`✅ ${typeLabel}导入成功！\n有效：${normalized.length}条 | 跳过：${skipped}条 | 总计：${allStationData.length}条`);
+                event.target.value = '';
+            };
+            reader.readAsArrayBuffer(file);
+        } catch (err) { mask.style.display = 'none'; console.error(err); alert(`❌ 导入失败：${err.message}`); event.target.value = ''; }
+    }, 100);
+}
+
+/** ==================== 渲染引擎 ==================== */
+function renderVisibleStations() {
+    if (!map || allStationData.length === 0) return;
+    const bounds = map.getBounds(), zoom = map.getZoom(), showSector = zoom > LOD_ZOOM_THRESHOLD;
+    overlayGroup4g.clearOverlays(); overlayGroup5g.clearOverlays(); overlayGroupTower.clearOverlays();
+    const v4 = [], v5 = [], vT = [];
+    for (const item of allStationData) {
+        const [gcjLng, gcjLat] = wgs84ToGcj02(item.lng, item.lat);
+        const pos = new AMap.LngLat(gcjLng, gcjLat);
+        if (!bounds.contains(pos)) continue;
+        const color = FREQ_COLORS[item.freq] || FREQ_COLORS[item.type] || 'rgba(128,128,128,0.5)';
+        let overlay;
+        if (item.type === 'tower') overlay = new AMap.Circle({ center: pos, radius: 8, fillColor: color, fillOpacity: 0.8, strokeWeight: 1, strokeColor: '#666' });
+        else if (!showSector) overlay = new AMap.Circle({ center: pos, radius: 5, fillColor: color, fillOpacity: 0.8, strokeWeight: 0 });
+        else if (item.siteType.includes('室分')) overlay = new AMap.Circle({ center: pos, radius: 30, fillColor: color, fillOpacity: 0.6, strokeWeight: 0 });
+        else {
+            let angle = 60, length = 60;
+            if (item.type === '4g' && ['3745','475'].includes(item.freq)) { angle = 30; length = 100; }
+            if (item.type === '5g' && item.freq === 'N1') { angle = 30; length = 100; }
+            overlay = createSector(pos, length, item.azimuth, angle, color);
+        }
+        overlay.on('click', (e) => { if (e) e.stopPropagation && e.stopPropagation(); collapsePanel(); showInfoWindow(item, pos); });
+        if (item.type === '4g') v4.push(overlay); else if (item.type === '5g') v5.push(overlay); else vT.push(overlay);
+    }
+    overlayGroup4g.addOverlays(v4); overlayGroup5g.addOverlays(v5); overlayGroupTower.addOverlays(vT);
+}
+function createSector(center, radius, direction, angle, color) {
+    const path = [center.toArray()], startAngle = direction - angle / 2;
+    for (let i = 0; i <= angle; i += 3) { const rad = (startAngle + i) * Math.PI / 180; path.push([center.lng + radius * Math.sin(rad) / 111319.9, center.lat + radius * Math.cos(rad) / 111319.9]); }
+    path.push(center.toArray());
+    return new AMap.Polygon({ path, fillColor: color, fillOpacity: 0.6, strokeWeight: 0 });
+}
+
+/** ==================== InfoWindow ==================== */
+const infoWindow = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -30), closeWhenClickMap: true });
+function showInfoWindow(item, pos) {
+    let content = '';
+    if (item.type === 'tower') content = `<div class="info-content"><b>🗼 ${item.name}</b><br/>区县: ${item.district}<br/>站址编码: ${item.siteCode}<br/>铁塔高度(米): ${item.towerHeight}<br/>机房类型: ${item.roomType}<br/>铁塔种类: ${item.towerKind}<br/>经度: ${item.lng.toFixed(5)}<br/>纬度: ${item.lat.toFixed(5)}<br/>详细地址: ${item.address}</div>`;
+    else content = `<div class="info-content"><b>${item.name}</b><br/>小区名: ${item.cellName}<br/>ECI/eNB: ${item.eci} | CI: ${item.ci}<br/>类型: ${item.type.toUpperCase()} ${item.siteType}<br/>频点/频带: ${item.freq} | 方位角: ${item.azimuth}°<br/>经纬度(WGS84): ${item.lng.toFixed(5)}, ${item.lat.toFixed(5)}</div>`;
+    infoWindow.setContent(content); infoWindow.open(map, pos);
+}
+
+/** ==================== 定位 & 查询 ==================== */
+function locateMe() {
+    geolocation.getCurrentPosition((status, result) => {
+        if (status === 'complete') {
+            const gcjLng = result.position.lng, gcjLat = result.position.lat;
+            map.setZoomAndCenter(16, [gcjLng, gcjLat]);
+            if (myLocationMarker) map.remove(myLocationMarker);
+            myLocationMarker = new AMap.Marker({ position: [gcjLng, gcjLat], title: '我的位置', zIndex: 999 });
+            myLocationMarker.setMap(map);
+            myLocationMarker.on('click', () => {
+                infoWindow.setContent(`<div class="info-content"><b>📍 我的位置</b><br/>GCJ-02经度: ${gcjLng.toFixed(6)}<br/>GCJ-02纬度: ${gcjLat.toFixed(6)}<br/><span style="color:#999;font-size:11px;">⚠️ 高德加密坐标，非WGS84</span></div>`);
+                infoWindow.open(map, [gcjLng, gcjLat]); collapsePanel();
+            });
+            collapsePanel();
+        } else alert("定位失败: " + result.message);
+    });
+}
+function locateByCoord() {
+    const lng = parseFloat(document.getElementById('locLng').value), lat = parseFloat(document.getElementById('locLat').value);
+    if (isNaN(lng) || isNaN(lat)) return alert("请输入有效的经纬度");
+    const [gcjLng, gcjLat] = wgs84ToGcj02(lng, lat);
+    map.setZoomAndCenter(18, [gcjLng, gcjLat]);
+    const marker = new AMap.Marker({ position: [gcjLng, gcjLat], title: `${lng},${lat}` });
+    marker.setMap(map); drawingOverlays.push(marker); drawOverlayGroup.addOverlays([marker]);
+    showCoordToast(`🎯 已定位到: ${lng}, ${lat}`); collapsePanel();
+}
+function toggleCoordPick() {
+    if (coordPickMode) { deactivateTool(); showCoordToast("❌ 坐标拾取已关闭"); return; }
+    activateTool('coordpick', 'btnCoordPick'); coordPickMode = true; map.setDefaultCursor('crosshair');
+    showCoordToast("📋 点击地图任意位置复制经纬度");
+}
+
+/** ==================== 工具集（全部单次使用） ==================== */
+function startMeasureDist() {
+    activateTool('dist', 'btnMDist');
+    rangingTool.turnOn();
+    showCoordToast("📏 点击地图测量距离，双击结束（结束后需重新点击按钮）");
+}
+function startMeasureAngle() {
+    activateTool('angle', 'btnMAngle');
+    map.setDefaultCursor('crosshair');
+    showCoordToast("📐 依次点击3个点测量夹角(A→B→C)，完成后需重新点击按钮");
+}
+function startDrawRect() {
+    activateTool('rect', 'btnDRect');
+    mouseTool.rectangle({ fillColor: '#faad14', fillOpacity: 0.2, strokeColor: '#faad14', strokeWeight: 2 });
+    showCoordToast("▭ 拖拽绘制矩形框选区域，自动导出范围内数据（结束后需重新点击按钮）");
+}
+function startDrawPolySelect() {
+    activateTool('polyselect', 'btnDPolySel');
+    mouseTool.polygon({ fillColor: '#13c2c2', fillOpacity: 0.2, strokeColor: '#13c2c2', strokeWeight: 2 });
+    showCoordToast("⬡ 依次点击绘制多边形框选区域，双击完成并自动导出数据（结束后需重新点击按钮）");
+}
+
+// 【恢复】清除标绘功能
+function clearDrawings() {
+    if (!confirm("确定清除所有标绘内容？")) return;
+    drawOverlayGroup.clearOverlays();
+    drawingOverlays = [];
+    lastSelectionBounds = null;
+    document.getElementById('btnExportSel').disabled = true;
+    deactivateTool();
+    showCoordToast("🧹 标绘已清除");
+}
+
+// 罗盘切换（非单次工具，保持原有切换逻辑）
+let compassOverlay = null, compassHandlers = [];
+function toggleCompass() {
+    if (compassOverlay) { map.remove(compassOverlay); compassOverlay = null; compassHandlers.forEach(h => map.off(h.event, h.handler)); compassHandlers = []; return; }
+    const dom = document.createElement('div');
+    dom.innerHTML = `<div style="width:60px;height:60px;background:rgba(255,255,255,0.9);border-radius:50%;border:2px solid #1890ff;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 2px 8px rgba(0,0,0,0.3);pointer-events:none;">🧭</div>`;
+    compassOverlay = new AMap.Marker({ position: map.getCenter(), content: dom, offset: new AMap.Pixel(-30,-30), zIndex: 200, draggable: false });
+    map.add(compassOverlay);
+    const upd = () => { if (!compassOverlay) return; compassOverlay.setPosition(map.getCenter()); dom.firstElementChild.style.transform = `rotate(${-map.getRotation()}deg)`; };
+    map.on('mapmove', upd); map.on('rotchange', upd);
+    compassHandlers = [{event:'mapmove',handler:upd},{event:'rotchange',handler:upd}]; upd();
+}
+
+function toggleDrawLayer() { document.getElementById('layerDraw').checked ? drawOverlayGroup.show() : drawOverlayGroup.hide(); }
+
+/** ==================== 框选导出（支持矩形+多边形） ==================== */
+function isPointInPolygon(point, polygonPath) {
+    let inside = false;
+    const x = point.lng, y = point.lat;
+    for (let i = 0, j = polygonPath.length - 1; i < polygonPath.length; j = i++) {
+        const xi = polygonPath[i].lng, yi = polygonPath[i].lat;
+        const xj = polygonPath[j].lng, yj = polygonPath[j].lat;
+        if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+function exportSelectionData() {
+    if (!lastSelectionBounds) return alert("请先使用矩形或多边形框选工具圈选区域");
+    let matched = [];
+    if (lastSelectionBounds.type === 'rect') {
+        const b = lastSelectionBounds.bounds;
+        matched = allStationData.filter(d => {
+            const [glng, glat] = wgs84ToGcj02(d.lng, d.lat);
+            return b.contains(new AMap.LngLat(glng, glat));
+        });
+    } else if (lastSelectionBounds.type === 'polygon') {
+        const path = lastSelectionBounds.path;
+        matched = allStationData.filter(d => {
+            const [glng, glat] = wgs84ToGcj02(d.lng, d.lat);
+            return isPointInPolygon({ lng: glng, lat: glat }, path);
+        });
+    }
+    if (matched.length === 0) return alert("框选范围内无站点数据");
+    const exportData = matched.map(d => ({ '类型': d.type === 'tower' ? '铁塔' : d.type.toUpperCase(), '站名': d.name, '小区名': d.cellName || '-', 'ECI': d.eci || '-', 'CI': d.ci || '-', '频点': d.freq || '-', '经度(WGS84)': d.lng, '纬度(WGS84)': d.lat, '区县': d.district || '-', '站型': d.siteType || '-' }));
+    if (typeof XLSX !== 'undefined') {
+        const ws = XLSX.utils.json_to_sheet(exportData); const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, '框选数据');
+        XLSX.writeFile(wb, `框选站点数据_${new Date().toISOString().slice(0,10)}.xlsx`);
+        showCoordToast(`📤 已导出 ${matched.length} 条数据`);
+    } else {
+        alert("Excel导出库未加载，无法导出文件。");
+    }
+}
+
+/** ==================== 搜索 & 图层 ==================== */
+function doSearch() {
+    const kw = document.getElementById('searchInput').value.trim().toLowerCase();
+    if (!kw) return alert("请输入搜索关键词");
+    const matched = allStationData.filter(d => d.name.toLowerCase().includes(kw) || d.cellName.toLowerCase().includes(kw) || d.eci.includes(kw) || d.ci.includes(kw));
+    const container = document.getElementById('searchResult'); container.innerHTML = '';
+    if (matched.length === 0) { container.style.display = 'none'; return alert("未找到匹配站点"); }
+    matched.slice(0, 50).forEach(item => {
+        const div = document.createElement('div'); div.className = 'search-item';
+        const label = item.type === 'tower' ? '铁塔' : item.type.toUpperCase();
+        div.innerText = `[${label}] ${item.name} ${item.type !== 'tower' ? '(' + item.cellName + ')' : ''}`;
+        div.onclick = () => {
+            collapsePanel();
+            if (!item._gcjLng || !item._gcjLat) { const [glng, glat] = wgs84ToGcj02(item.lng, item.lat); item._gcjLng = glng; item._gcjLat = glat; }
+            const targetPos = new AMap.LngLat(item._gcjLng, item._gcjLat);
+            afterPanelTransition(() => { map.setZoomAndCenter(18, targetPos); showInfoWindow(item, targetPos); container.style.display = 'none'; });
+        };
+        container.appendChild(div);
+    });
+    container.style.display = 'block';
+}
+function toggleLayer(type) {
+    const c = document.getElementById(`layer${type.charAt(0).toUpperCase()+type.slice(1)}`).checked;
+    if (type==='4g') c ? overlayGroup4g.show() : overlayGroup4g.hide();
+    if (type==='5g') c ? overlayGroup5g.show() : overlayGroup5g.hide();
+    if (type==='tower') c ? overlayGroupTower.show() : overlayGroupTower.hide();
+}
+function updateStats() {
+    const c4 = allStationData.filter(d=>d.type==='4g').length, c5 = allStationData.filter(d=>d.type==='5g').length, cT = allStationData.filter(d=>d.type==='tower').length;
+    document.getElementById('statsPanel').innerHTML = `4G:${c4.toLocaleString()} | 5G:${c5.toLocaleString()} | 铁塔:${cT.toLocaleString()} | 总:${(c4+c5+cT).toLocaleString()}`;
+}
+</script>
+</body>
+</html>

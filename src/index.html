@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电联一张网整合分析工具 V2.5</title>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --accent-color: #3498db;
+            --success-color: #27ae60;
+            --danger-color: #c0392b;
+            --bg-color: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+
+
+
+        body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: #333; margin: 0; padding: 20px; line-height: 1.6; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        header { text-align: center; margin-bottom: 30px; }
+        h1 { color: var(--primary-color); margin-bottom: 5px; }
+        p.subtitle { color: #666; font-size: 0.9em; margin-top: 0; }
+
+        .upload-section { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+        .file-card { background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); text-align: center; border: 2px dashed #ddd; transition: all 0.3s; }
+        .file-card:hover { border-color: var(--accent-color); }
+        .file-card.loaded { border-color: var(--success-color); background-color: #f0fff4; }
+        input[type="file"] { display: none; }
+        .btn-upload { display: inline-block; padding: 10px 20px; background-color: var(--accent-color); color: white; border-radius: 5px; cursor: pointer; margin-top: 10px; }
+        .file-name { margin-top: 10px; font-weight: bold; color: #555; min-height: 24px; word-break: break-all;}
+
+        .action-bar { text-align: center; margin-bottom: 30px; display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;}
+        .btn-main { padding: 12px 40px; font-size: 1.1em; background-color: var(--primary-color); color: white; border: none; border-radius: 6px; cursor: pointer; transition: background 0.3s; }
+        .btn-main:hover { background-color: #1a252f; }
+        .btn-main:disabled { background-color: #ccc; cursor: not-allowed; }
+        .btn-export { padding: 10px 30px; font-size: 1em; background-color: var(--success-color); color: white; border: none; border-radius: 6px; cursor: pointer; display: none; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .stat-card h3 { margin-top: 0; border-bottom: 2px solid var(--accent-color); padding-bottom: 10px; color: var(--primary-color); font-size: 1.1em;}
+        table.stats-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .stats-table th, .stats-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.95em;}
+        .stats-table th { background-color: #f8f9fa; color: #555; width: 40%;}
+
+        .detail-section { background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 40px; display: none;}
+        .detail-section h3 { margin-top: 0; color: var(--primary-color); margin-bottom: 15px; }
+        .table-wrapper { overflow-x: auto; max-height: 70vh; border: 1px solid #eee; border-radius: 4px; }
+        table.detail-table { width: 100%; border-collapse: collapse; min-width: 1600px; font-size: 0.85em; }
+        .detail-table th, .detail-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+        .detail-table th { background-color: var(--primary-color); color: white; position: sticky; top: 0; z-index: 10; }
+        .detail-table tr:nth-child(even) { background-color: #fafafa; }
+        .detail-table tr:hover { background-color: #f0f7ff; }
+        
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.85em; color: white; font-weight: bold;}
+        .tag-keep { background-color: var(--success-color); }
+        .tag-remove { background-color: var(--danger-color); }
+        .tag-high { background-color: #e67e22; }
+        .tag-low { background-color: #3498db; }
+        .tag-co { background-color: #8e44ad; }
+        .tag-solo { background-color: #7f8c8d; }
+
+        #loading { display: none; text-align: center; margin: 20px; color: var(--accent-color); font-weight: bold; font-size: 1.1em;}
+        @media (max-width: 768px) { .upload-section { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>📡 电联一张网整合分析工具 V2.5</h1>
+        <p class="subtitle">匈牙利算法全局最优匹配 | 同扇区PRB独立判定高负荷 | 一键导出详表</p>
+    </header>
+
+    <div class="upload-section">
+        <div class="file-card" id="card-dx">
+            <h3>📂 电信工参表</h3>
+            <label for="file-dx" class="btn-upload">选择文件</label>
+            <input type="file" id="file-dx" accept=".xlsx, .xls">
+            <div class="file-name" id="name-dx">未选择文件</div>
+        </div>
+        <div class="file-card" id="card-cu">
+            <h3>📂 联通工参表</h3>
+            <label for="file-cu" class="btn-upload">选择文件</label>
+            <input type="file" id="file-cu" accept=".xlsx, .xls">
+            <div class="file-name" id="name-cu">未选择文件</div>
+        </div>
+    </div>
+
+    <div class="action-bar">
+        <button id="btn-analyze" class="btn-main" disabled>开始分析整合</button>
+        <button id="btn-export" class="btn-export">📥 导出整合方案详表</button>
+    </div>
+
+    <div id="loading">⏳ 正在计算站址距离、扇区匹配及负荷判定，请稍候...</div>
+
+    <div id="stats-section" class="stats-grid" style="display:none;">
+        <div class="stat-card">
+            <h3>📍 站址/扇区维度统计</h3>
+            <table class="stats-table">
+                <thead><tr><th>指标</th><th>电信</th><th>联通</th></tr></thead>
+                <tbody id="tb-site-stats"></tbody>
+            </table>
+        </div>
+        <div class="stat-card">
+            <h3>🔧 拆除/保留维度统计</h3>
+            <table class="stats-table">
+                <thead><tr><th>指标</th><th>电信</th><th>联通</th></tr></thead>
+                <tbody id="tb-action-stats"></tbody>
+            </table>
+        </div>
+        <div class="stat-card">
+            <h3>📋 当前整合策略</h3>
+            <ul style="padding-left: 20px; color: #555; font-size: 0.9em; margin: 10px 0;">
+                <li><strong>共站阈值：</strong>市区&lt;100m | 县城&lt;150m | 乡镇&lt;250m | 农村&lt;350m</li>
+                <li><strong>高负荷扇区：</strong>同扇区PRB(平时)_电联&gt;60 或 PRB(假期)_电联&gt;80</li>
+                <li><strong>共址含高负荷扇区：</strong>双方保留共享</li>
+                <li><strong>共址无高负荷扇区：</strong><span style="color:var(--success-color);font-weight:bold;">保留电信</span>，<span style="color:var(--danger-color);font-weight:bold;">拆除联通</span></li>
+                <li><strong>独站/高铁：</strong>双方均保留</li>
+            </ul>
+        </div>
+    </div>
+
+
+
+    <div id="detail-section" class="detail-section">
+        <h3>📊 整合后方案详表（预览前200条）</h3>
+        <div class="table-wrapper">
+            <table class="detail-table" id="detail-table">
+                <thead>
+                    <tr>
+                        <th>运营商</th><th>地市</th><th>区县</th><th>站址</th><th>基站名称</th><th>小区名称</th>
+                        <th>方位角</th><th>场景</th><th>PRB(平时)_电联</th><th>PRB(假期)_电联</th>
+                        <th>站址类型</th><th>匹配对方基站</th><th>匹配对方小区</th><th>对方方位角</th>
+                        <th>角度差(°)</th><th>对方站距(m)</th><th>负荷判定</th><th>拆除/保留</th><th>整合建议</th>
+                    </tr>
+                </thead>
+                <tbody id="detail-tbody"></tbody>
+            </table>
+        </div>
+        <p style="text-align:center; color:#999; font-size:0.85em; margin-top:10px;" id="table-hint"></p>
+    </div>
+</div>
+
+        </div>
+
+<!-- 新增页脚 -->
+<footer style="background-color: #fff; border-top: 1px solid #e5e7eb; padding: 1rem 0; margin-top: auto;">
+    <div style="width: 100%; text-align: center; font-size: 0.875rem; color: #6b7280;">
+        <p style="margin: 0;">电联一张网整合分析工具 © 2026 盐城联通网络部无线网运营网格&夏小祥创新工作室 | 版本：V2.5</p>
+    </div>
+</footer>
+
+
+<script>
+/** ==================== 全局状态 ==================== */
+let dxData = [], cuData = [], mergedResult = [];
+
+const fileDx = document.getElementById('file-dx');
+const fileCu = document.getElementById('file-cu');
+const btnAnalyze = document.getElementById('btn-analyze');
+const btnExport = document.getElementById('btn-export');
+const loading = document.getElementById('loading');
+
+/** ==================== 1. 文件解析 ==================== */
+function handleFileSelect(e, operator) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const cardId = operator === 'DX' ? 'card-dx' : 'card-cu';
+    const nameId = operator === 'DX' ? 'name-dx' : 'name-cu';
+    document.getElementById(nameId).textContent = file.name;
+    document.getElementById(cardId).classList.add('loaded');
+
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+        const data = new Uint8Array(ev.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {defval:""});
+        const normalized = json.map(r => normalizeRow(r, operator));
+        if (operator === 'DX') dxData = normalized; else cuData = normalized;
+        btnAnalyze.disabled = !(dxData.length > 0 && cuData.length > 0);
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function normalizeRow(row, op) {
+    return {
+        ...row,
+        _op: op,
+        _site: String(row['站址']||'').trim(),
+        _cell: String(row['小区名称']||'').trim(),
+        _scene: String(row['场景']||'').trim(),
+        _lon: parseFloat(row['longitude'])||0,
+        _lat: parseFloat(row['latitude'])||0,
+        _azimuth: parseFloat(row['方位角'])||0,
+        _prb_normal: parseFloat(row['PRB利用率（平时）'])||0,
+        _prb_holiday: parseFloat(row['PRB利用率（假期）'])||0,
+        _is_highway: String(row['场景']||'').includes('高铁') || String(row['站址']||'').includes('高铁')
+    };
+}
+
+fileDx.addEventListener('change', e => handleFileSelect(e, 'DX'));
+fileCu.addEventListener('change', e => handleFileSelect(e, 'CU'));
+
+/** ==================== 2. 核心算法 ==================== */
+function getDistance(lon1,lat1,lon2,lat2) {
+    const R=6371e3, toRad=d=>d*Math.PI/180;
+    const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+    const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function getThreshold(scene) {
+    const s = scene.toLowerCase();
+    if (s.includes('市区')||s.includes('城区')) return 100;
+    if (s.includes('县城')||s.includes('县')) return 150;
+    if (s.includes('乡镇')||s.includes('镇')) return 250;
+    return 350;
+}
+
+function getAngleDiff(a1,a2) { let d=Math.abs(a1-a2); return d>180?360-d:d; }
+
+function hungarianMatch(costMatrix) {
+    const n = costMatrix.length;      
+    const m = costMatrix[0].length;   
+    
+    const size = Math.max(n, m);
+    const mat = Array.from({length: size}, () => Array(size).fill(0));
+    for(let i=0; i<n; i++) for(let j=0; j<m; j++) mat[i][j] = costMatrix[i][j];
+    
+    const u = new Array(size+1).fill(0);
+    const v = new Array(size+1).fill(0);
+    const p = new Array(size+1).fill(0);
+    const way = new Array(size+1).fill(0);
+    
+    for (let i=1; i<=size; ++i) {
+        p[0] = i;
+        let j0 = 0;
+        const minv = new Array(size+1).fill(Infinity);
+        const used = new Array(size+1).fill(false);
+        
+        do {
+            used[j0] = true;
+            let i0 = p[j0], delta = Infinity, j1;
+            for (let j=1; j<=size; ++j) {
+                if (!used[j]) {
+                    const cur = mat[i0-1][j-1] - u[i0] - v[j];
+                    if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
+                    if (minv[j] < delta) { delta = minv[j]; j1 = j; }
+                }
+            }
+            for (let j=0; j<=size; ++j) {
+                if (used[j]) { u[p[j]] += delta; v[j] -= delta; }
+                else { minv[j] -= delta; }
+            }
+            j0 = j1;
+        } while (p[j0] !== 0);
+        
+        do {
+            let j1 = way[j0];
+            p[j0] = p[j1];
+            j0 = j1;
+        } while (j0);
+    }
+    
+    const result = [];
+    for (let j=1; j<=size; ++j) {
+        if (p[j] !== 0 && p[j] <= n && j <= m) {
+            result.push({ dxIndex: p[j]-1, cuIndex: j-1, cost: mat[p[j]-1][j-1] });
+        }
+    }
+    return result;
+}
+
+function matchSectors(dxCells, cuCells) {
+    const pairs = [];
+    
+    if (dxCells.length === 0 && cuCells.length === 0) return pairs;
+    if (cuCells.length === 0) {
+        dxCells.forEach(dx => pairs.push({dx, cu:null, angleDiff:null}));
+        return pairs;
+    }
+    if (dxCells.length === 0) {
+        cuCells.forEach(cu => pairs.push({dx:null, cu, angleDiff:null}));
+        return pairs;
+    }
+    
+    const costMatrix = dxCells.map(dx => 
+        cuCells.map(cu => getAngleDiff(dx._azimuth, cu._azimuth))
+    );
+    
+    const matches = hungarianMatch(costMatrix);
+    const matchedDx = new Set();
+    const matchedCu = new Set();
+    
+    matches.forEach(m => {
+        pairs.push({
+            dx: dxCells[m.dxIndex],
+            cu: cuCells[m.cuIndex],
+            angleDiff: m.cost
+        });
+        matchedDx.add(m.dxIndex);
+        matchedCu.add(m.cuIndex);
+    });
+    
+    dxCells.forEach((dx, idx) => {
+        if (!matchedDx.has(idx)) pairs.push({dx, cu:null, angleDiff:null});
+    });
+    
+    cuCells.forEach((cu, idx) => {
+        if (!matchedCu.has(idx)) pairs.push({dx:null, cu, angleDiff:null});
+    });
+    
+    return pairs;
+}
+
+function runAnalysis() {
+    loading.style.display='block';
+    document.getElementById('stats-section').style.display='none';
+    document.getElementById('detail-section').style.display='none';
+    btnExport.style.display='none';
+
+    setTimeout(() => {
+        try {
+            mergedResult = [];
+            const dxProcessed=new Set(), cuProcessed=new Set();
+            
+            const cuSiteMap = {};
+            cuData.forEach(c => { if(!cuSiteMap[c._site]) cuSiteMap[c._site]=c; });
+
+            const dxSiteMap = {};
+            dxData.forEach(d => { if(!dxSiteMap[d._site]) dxSiteMap[d._site]=d; });
+
+            Object.values(dxSiteMap).forEach(dxRep => {
+                if (dxProcessed.has(dxRep._site)) return;
+                const threshold = getThreshold(dxRep._scene);
+                let minDist=Infinity, nearestCuSite=null;
+
+                for (const [cuSite, cuRep] of Object.entries(cuSiteMap)) {
+                    if (cuProcessed.has(cuSite)) continue;
+                    const dist = getDistance(dxRep._lon, dxRep._lat, cuRep._lon, cuRep._lat);
+                    if (dist < minDist) { minDist=dist; nearestCuSite=cuSite; }
+                }
+
+                const isCoSite = nearestCuSite && minDist <= threshold;
+                const dxCells = dxData.filter(d=>d._site===dxRep._site);
+                const cuCells = isCoSite ? cuData.filter(c=>c._site===nearestCuSite) : [];
+
+                if (isCoSite) {
+                    cuProcessed.add(nearestCuSite);
+                    const matched = matchSectors(dxCells, cuCells);
+                    
+                    // 【核心修改】逐对扇区独立判定高负荷
+                    let hasAnyHighLoadSector = false;
+                    const pairHighLoadFlags = matched.map(m => {
+                        const combinedNormal = (m.dx?._prb_normal||0) + (m.cu?._prb_normal||0);
+                        const combinedHoliday = (m.dx?._prb_holiday||0) + (m.cu?._prb_holiday||0);
+                        const isPairHigh = combinedNormal > 60 || combinedHoliday > 80;
+                        if (isPairHigh) hasAnyHighLoadSector = true;
+                        return isPairHigh;
+                    });
+
+                    const hasHighway = dxCells.some(c=>c._is_highway) || cuCells.some(c=>c._is_highway);
+
+                    // 整站级整合策略：只要存在任一高负荷扇区，整站双方保留
+                    let action, suggestion;
+                    if (hasHighway) { action='KEEP_BOTH'; suggestion='高铁/重点场景，双方保留'; }
+                    else if (hasAnyHighLoadSector) { action='KEEP_BOTH'; suggestion='含高负荷扇区，双方保留共享'; }
+                    else { action='KEEP_DX_REMOVE_CU'; suggestion='共址可盘活，保留电信拆除联通'; }
+
+                    // 将每对扇区的独立高负荷标记传入addRow
+                    matched.forEach((m, idx) => addRow(m.dx, m.cu, '共站址', minDist, action, pairHighLoadFlags[idx], suggestion));
+                } else {
+                    dxCells.forEach(c => addRow(c, null, '独站址', null, 'KEEP_SOLO', false, '独站保留'));
+                }
+                dxProcessed.add(dxRep._site);
+            });
+
+            Object.keys(cuSiteMap).forEach(site => {
+                if (!cuProcessed.has(site)) {
+                    cuData.filter(c=>c._site===site).forEach(c => 
+                        addRow(null, c, '独站址', null, 'KEEP_SOLO', false, '独站保留')
+                    );
+                }
+            });
+
+            renderStats();
+            renderDetailTable();
+            document.getElementById('stats-section').style.display='grid';
+            document.getElementById('detail-section').style.display='block';
+            btnExport.style.display='inline-block';
+        } catch(err) { alert("分析出错: "+err.message); console.error(err); }
+        finally { loading.style.display='none'; }
+    }, 100);
+}
+
+function addRow(dxCell, cuCell, siteType, distance, action, isHighLoad, suggestion) {
+    const combinedPrbNormal = ((dxCell?._prb_normal || 0) + (cuCell?._prb_normal || 0)).toFixed(2);
+    const combinedPrbHoliday = ((dxCell?._prb_holiday || 0) + (cuCell?._prb_holiday || 0)).toFixed(2);
+
+    const buildRow = (cell, peerCell, isDx) => {
+        if (!cell) return null;
+        let disposition;
+        if (action==='KEEP_BOTH'||action==='KEEP_SOLO') disposition='保留';
+        else if (action==='KEEP_DX_REMOVE_CU') disposition = isDx ? '保留' : '拆除';
+        else disposition='保留';
+
+        return {
+            '运营商': cell._op==='DX'?'电信':'联通',
+            '地市': cell['地市']||'',
+            '区县': cell['区县']||'',
+            '站址': cell._site,
+            '基站名称': cell['基站名称']||'',
+            '小区名称': cell._cell,
+            '方位角': cell._azimuth,
+            '场景': cell._scene,
+            'PRB(平时)_电联': combinedPrbNormal,
+            'PRB(假期)_电联': combinedPrbHoliday,
+            '站址类型': siteType,
+            '匹配对方基站': peerCell?._site||'-',
+            '匹配对方小区': peerCell?._cell||'-',
+            '对方方位角': peerCell?._azimuth??'-',
+            '角度差(°)': (cell&&peerCell)?getAngleDiff(cell._azimuth,peerCell._azimuth).toFixed(1):'-',
+            '对方站距(m)': distance!=null?distance.toFixed(1):'-',
+            // isHighLoad 现在是该对扇区级别的独立判定结果
+            '负荷判定': siteType==='共站址'?(isHighLoad?'高负荷':'可盘活'):'-',
+            '拆除/保留': disposition,
+            '整合建议': suggestion
+        };
+    };
+
+    if (dxCell) mergedResult.push(buildRow(dxCell, cuCell, true));
+    if (cuCell) mergedResult.push(buildRow(cuCell, dxCell, false));
+}
+
+/** ==================== 3. 渲染统计 ==================== */
+function renderStats() {
+    const s = { dx:{coS:new Set(),soS:new Set(),coC:0,soC:0}, cu:{coS:new Set(),soS:new Set(),coC:0,soC:0} };
+    const a = { dx:{kS:new Set(),rS:new Set(),kC:0,rC:0}, cu:{kS:new Set(),rS:new Set(),kC:0,rC:0} };
+
+    mergedResult.forEach(r => {
+        const isCo = r['站址类型']==='共站址';
+        const op = r['运营商']==='电信'?'dx':'cu';
+        const site = r['站址'];
+        
+        if(isCo) s[op].coS.add(site); else s[op].soS.add(site);
+        if(isCo) s[op].coC++; else s[op].soC++;
+
+        if(r['拆除/保留']==='保留') { a[op].kS.add(site); a[op].kC++; }
+        else { a[op].rS.add(site); a[op].rC++; }
+    });
+
+    document.getElementById('tb-site-stats').innerHTML = `
+        <tr><td>共站址数</td><td>${s.dx.coS.size}</td><td>${s.cu.coS.size}</td></tr>
+        <tr><td>独站址数</td><td>${s.dx.soS.size}</td><td>${s.cu.soS.size}</td></tr>
+        <tr><td>共站址扇区数</td><td>${s.dx.coC}</td><td>${s.cu.coC}</td></tr>
+        <tr><td>独站址扇区数</td><td>${s.dx.soC}</td><td>${s.cu.soC}</td></tr>`;
+
+    document.getElementById('tb-action-stats').innerHTML = `
+        <tr><td>保留站址数</td><td>${a.dx.kS.size}</td><td>${a.cu.kS.size}</td></tr>
+        <tr><td>拆除站址数</td><td>${a.dx.rS.size}</td><td>${a.cu.rS.size}</td></tr>
+        <tr><td>保留扇区数</td><td>${a.dx.kC}</td><td>${a.cu.kC}</td></tr>
+        <tr><td>拆除扇区数</td><td>${a.dx.rC}</td><td>${a.cu.rC}</td></tr>`;
+}
+
+/** ==================== 4. 渲染详表 ==================== */
+function renderDetailTable() {
+    const tbody = document.getElementById('detail-tbody');
+    const hint = document.getElementById('table-hint');
+    const previewLimit = 200;
+    const displayData = mergedResult.slice(0, previewLimit);
+
+    tbody.innerHTML = displayData.map(r => {
+        const dispClass = r['拆除/保留']==='保留'?'tag-keep':'tag-remove';
+        const loadClass = r['负荷判定']==='高负荷'?'tag-high':(r['负荷判定']==='可盘活'?'tag-low':'');
+        const typeClass = r['站址类型']==='共站址'?'tag-co':'tag-solo';
+        return `<tr>
+            <td><span class="tag ${r['运营商']==='电信'?'tag-co':'tag-solo'}">${r['运营商']}</span></td>
+            <td>${r['地市']}</td><td>${r['区县']}</td><td>${r['站址']}</td><td>${r['基站名称']}</td><td>${r['小区名称']}</td>
+            <td>${r['方位角']}</td><td>${r['场景']}</td>
+            <td>${r['PRB(平时)_电联']}</td><td>${r['PRB(假期)_电联']}</td>
+            <td><span class="tag ${typeClass}">${r['站址类型']}</span></td>
+            <td>${r['匹配对方基站']}</td><td>${r['匹配对方小区']}</td><td>${r['对方方位角']}</td>
+            <td>${r['角度差(°)']}</td><td>${r['对方站距(m)']}</td>
+            <td>${loadClass?`<span class="tag ${loadClass}">${r['负荷判定']}</span>`:r['负荷判定']}</td>
+            <td><span class="tag ${dispClass}">${r['拆除/保留']}</span></td>
+            <td>${r['整合建议']}</td>
+        </tr>`;
+    }).join('');
+
+    hint.textContent = mergedResult.length > previewLimit 
+        ? `当前预览前 ${previewLimit} 条，共 ${mergedResult.length} 条记录。请点击"导出整合方案详表"获取完整数据。`
+        : `共 ${mergedResult.length} 条记录`;
+}
+
+/** ==================== 5. 导出 ==================== */
+function exportExcel() {
+    if (!mergedResult.length) return;
+    const ws = XLSX.utils.json_to_sheet(mergedResult);
+    
+    ws['!cols'] = [
+        {wch:6},{wch:8},{wch:8},{wch:20},{wch:25},{wch:25},
+        {wch:8},{wch:10},{wch:16},{wch:16},{wch:10},{wch:20},{wch:25},
+        {wch:10},{wch:10},{wch:12},{wch:10},{wch:10},{wch:30}
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "整合方案详表");
+
+    const statsRows = [];
+    ['tb-site-stats','tb-action-stats'].forEach(tid => {
+        document.querySelectorAll(`#${tid} tr`).forEach(tr => {
+            const cells = tr.querySelectorAll('td');
+            if(cells.length>=3) statsRows.push({指标:cells[0].innerText, 电信:cells[1].innerText, 联通:cells[2].innerText});
+        });
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(statsRows), "统计概览");
+
+    XLSX.writeFile(wb, `电联一张网整合方案_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+btnAnalyze.addEventListener('click', runAnalysis);
+btnExport.addEventListener('click', exportExcel);
+</script>
+</body>
+</html>
